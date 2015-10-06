@@ -3,9 +3,13 @@ mod gte;
 
 use std::fmt::{Display, Formatter, Error};
 
+use gpu::Gpu;
+use cdrom::disc::Disc;
+
 use self::cop0::{Cop0, Exception};
 use self::gte::Gte;
 use memory::{Interconnect, Addressable, AccessWidth};
+use memory::bios::Bios;
 use timekeeper::TimeKeeper;
 use debugger::Debugger;
 use padmemcard::gamepad;
@@ -55,7 +59,7 @@ pub struct Cpu {
 impl Cpu {
 
     /// Create a new CPU instance
-    pub fn new(inter: Interconnect) -> Cpu {
+    pub fn new(bios: Bios, disc: Option<Disc>, gpu: Gpu) -> Cpu {
         // Not sure what the reset values are...
         let mut regs = [0xdeadbeef; 32];
 
@@ -75,7 +79,7 @@ impl Cpu {
             hi:         0xdeadbeef,
             lo:         0xdeadbeef,
             icache:     [ICacheLine::new(); 0x100],
-            inter:      inter,
+            inter:      Interconnect::new(bios, disc, gpu),
             cop0:       Cop0::new(),
             gte:        Gte::new(),
             load:       (RegisterIndex(0), 0),

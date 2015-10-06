@@ -15,7 +15,6 @@ use std::path::Path;
 use gpu::Gpu;
 use gpu::opengl::Renderer;
 use cpu::Cpu;
-use memory::Interconnect;
 use memory::bios::Bios;
 use debugger::Debugger;
 use padmemcard::gamepad;
@@ -80,8 +79,7 @@ fn main() {
 
     let renderer = Renderer::new(&sdl_context);
     let gpu = Gpu::new(renderer, video_standard);
-    let inter = Interconnect::new(bios, gpu, disc);
-    let mut cpu = Cpu::new(inter);
+    let mut cpu = Box::new(Cpu::new(bios, disc, gpu));
 
     let mut debugger = Debugger::new();
 

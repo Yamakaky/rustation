@@ -38,7 +38,7 @@ pub struct Interconnect {
 }
 
 impl Interconnect {
-    pub fn new(bios: Bios, gpu: Gpu, disc: Option<Disc>) -> Interconnect {
+    pub fn new(bios: Bios, disc: Option<Disc>, gpu: Gpu) -> Interconnect {
         Interconnect {
             irq_state: InterruptState::new(),
             bios: bios,

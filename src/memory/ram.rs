@@ -1,23 +1,15 @@
-use std::iter;
 use super::Addressable;
 
 /// RAM
 pub struct Ram {
     /// RAM buffer
-    data: Vec<u8>
+    data: [u8; RAM_SIZE]
 }
 
 impl Ram {
-
     /// Instantiate main RAM with garbage values
     pub fn new() -> Ram {
-
-        let size = 2 * 1024 * 1024;
-
-        // Default RAM contents are garbage
-        let data = iter::repeat(0xca).take(size).collect();
-
-        Ram { data: data }
+        Ram { data: [0xca; RAM_SIZE] }
     }
 
     /// Fetch the little endian value at `offset`
@@ -44,3 +36,6 @@ impl Ram {
         }
     }
 }
+
+/// The PlayStation has 2 megabytes of RAM
+const RAM_SIZE: usize = 2 * 1024 * 1024;
