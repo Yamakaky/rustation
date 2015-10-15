@@ -2,15 +2,31 @@ use memory::{Addressable, AccessWidth};
 
 /// Sound Processing Unit
 pub struct Spu {
+    enabled: bool,
     main_volume_left: Volume,
     main_volume_right: Volume,
+    reverb_volume_left: i16,
+    reverb_volume_right: i16,
+    cd_volume_left: i16,
+    cd_volume_right: i16,
+    ext_volume_left: i16,
+    ext_volume_right: i16,
+    ram_transfer_start: u16,
 }
 
 impl Spu {
     pub fn new() -> Spu {
         Spu {
+            enabled: false,
             main_volume_left: Volume::new(),
             main_volume_right: Volume::new(),
+            reverb_volume_left: 0,
+            reverb_volume_right: 0,
+            cd_volume_left: 0,
+            cd_volume_right: 0,
+            ext_volume_left: 0,
+            ext_volume_right: 0,
+            ram_transfer_start: 0,
         }
     }
 
@@ -24,8 +40,84 @@ impl Spu {
         match offset {
             0x180 => self.main_volume_left = Volume::from_reg(val),
             0x182 => self.main_volume_right = Volume::from_reg(val),
+            0x184 => self.reverb_volume_left = val as i16,
+            0x186 => self.reverb_volume_right = val as i16,
+            0x18c => self.set_voice_off(val as u32),
+            0x18e => self.set_voice_off((val as u32) << 16),
+            0x190 => self.enable_pitch_modulation(val as u32),
+            0x192 => self.enable_pitch_modulation((val as u32) << 16),
+            0x194 => self.enable_noise_mode(val as u32),
+            0x196 => self.enable_noise_mode((val as u32) << 16),
+            0x198 => self.enable_reverb(val as u32),
+            0x19a => self.enable_reverb((val as u32) << 16),
+            0x1a6 => self.ram_transfer_start = val,
+            0x1aa => self.set_control(val),
+            0x1ac => self.set_ram_control(val),
+            0x1b0 => self.cd_volume_left = val as i16,
+            0x1b2 => self.cd_volume_right = val as i16,
+            0x1b4 => self.ext_volume_left = val as i16,
+            0x1b6 => self.ext_volume_right = val as i16,
             _ => panic!("Unhandled SPU store {:x} {:04x}", offset, val),
         }
+    }
+
+    pub fn load<T: Addressable>(&mut self, offset: u32) -> T {
+        if T::width() != AccessWidth::HalfWord {
+            panic!("Unhandled {:?} SPU load", T::width());
+        }
+
+        let r =
+            match offset {
+                0x1aa => self.control(),
+                0x1ae => self.status(),
+                _ => panic!("Unhandled SPU load {:x}", offset),
+            };
+
+        Addressable::from_u32(r as u32)
+    }
+
+    fn control(&self) -> u16 {
+        let mut r = 0u16;
+
+        r |= (self.enabled as u16) << 15;
+
+        r
+    }
+
+    fn set_control(&mut self, ctrl: u16) {
+        self.enabled = (ctrl >> 15) & 1 != 0;
+
+        if ctrl & 0x7fff != 0 {
+            panic!("Unhandled SPU control {:04x}", ctrl);
+        }
+    }
+
+    fn status(&self) -> u16 {
+        0
+    }
+
+    /// Set the SPU RAM access pattern
+    fn set_ram_control(&self, val: u16) {
+        // For now only support "normal" (i.e. sequential) access
+        if val != 0x4 {
+            panic!("Unhandled SPU RAM access pattern {:x}", val);
+        }
+    }
+
+    fn set_voice_off(&mut self, val: u32) {
+        println!("SPU set voice off {:x}", val);
+    }
+
+    fn enable_pitch_modulation(&mut self, val: u32) {
+        println!("SPU enable pitch modulation {:x}", val);
+    }
+
+    fn enable_noise_mode(&mut self, val: u32) {
+        println!("SPU enable noise {:x}", val);
+    }
+
+    fn enable_reverb(&mut self, val: u32) {
+        println!("SPU enable reverb {:x}", val);
     }
 }
 

@@ -167,8 +167,8 @@ impl Interconnect {
             return Addressable::from_u32(0);
         }
 
-        if let Some(_) = map::SPU.contains(abs_addr) {
-            panic!("Unhandled read from SPU register {:08x}", abs_addr);
+        if let Some(offset) = map::SPU.contains(abs_addr) {
+            return self.spu.load(offset);
         }
 
         if let Some(offset) = map::PAD_MEMCARD.contains(abs_addr) {
