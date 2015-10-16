@@ -2,7 +2,7 @@ use memory::{Addressable, AccessWidth};
 
 /// Sound Processing Unit
 pub struct Spu {
-    enabled: bool,
+    control: u16,
     main_volume_left: Volume,
     main_volume_right: Volume,
     reverb_volume_left: i16,
@@ -11,13 +11,17 @@ pub struct Spu {
     cd_volume_right: i16,
     ext_volume_left: i16,
     ext_volume_right: i16,
-    ram_transfer_start: u16,
+
+    /// SPU RAM: 256k 16bit samples
+    ram: [u16; 256 * 1024],
+    /// Write pointer in the SPU RAM
+    ram_index: u32,
 }
 
 impl Spu {
     pub fn new() -> Spu {
         Spu {
-            enabled: false,
+            control: 0,
             main_volume_left: Volume::new(),
             main_volume_right: Volume::new(),
             reverb_volume_left: 0,
@@ -26,7 +30,9 @@ impl Spu {
             cd_volume_right: 0,
             ext_volume_left: 0,
             ext_volume_right: 0,
-            ram_transfer_start: 0,
+
+            ram: [0xbad; 256 * 1024],
+            ram_index: 0,
         }
     }
 
@@ -50,7 +56,8 @@ impl Spu {
             0x196 => self.enable_noise_mode((val as u32) << 16),
             0x198 => self.enable_reverb(val as u32),
             0x19a => self.enable_reverb((val as u32) << 16),
-            0x1a6 => self.ram_transfer_start = val,
+            0x1a6 => self.ram_index = (val as u32) << 2,
+            0x1a8 => self.fifo_write(val),
             0x1aa => self.set_control(val),
             0x1ac => self.set_ram_control(val),
             0x1b0 => self.cd_volume_left = val as i16,
@@ -68,7 +75,7 @@ impl Spu {
 
         let r =
             match offset {
-                0x1aa => self.control(),
+                0x1aa => self.control,
                 0x1ae => self.status(),
                 _ => panic!("Unhandled SPU load {:x}", offset),
             };
@@ -76,24 +83,16 @@ impl Spu {
         Addressable::from_u32(r as u32)
     }
 
-    fn control(&self) -> u16 {
-        let mut r = 0u16;
-
-        r |= (self.enabled as u16) << 15;
-
-        r
-    }
-
     fn set_control(&mut self, ctrl: u16) {
-        self.enabled = (ctrl >> 15) & 1 != 0;
+        self.control = ctrl;
 
-        if ctrl & 0x7fff != 0 {
+        if ctrl & 0x7fef != 0 {
             panic!("Unhandled SPU control {:04x}", ctrl);
         }
     }
 
     fn status(&self) -> u16 {
-        0
+        self.control & 0x3f
     }
 
     /// Set the SPU RAM access pattern
@@ -102,6 +101,16 @@ impl Spu {
         if val != 0x4 {
             panic!("Unhandled SPU RAM access pattern {:x}", val);
         }
+    }
+
+    fn fifo_write(&mut self, val: u16) {
+        // XXX handle FIFO overflow?
+        let index = self.ram_index;
+
+        println!("SPU RAM store {:05x}: {:04x}", index, val);
+
+        self.ram[index as usize] = val;
+        self.ram_index = (index + 1) & 0x3ffff;
     }
 
     fn set_voice_off(&mut self, val: u32) {
