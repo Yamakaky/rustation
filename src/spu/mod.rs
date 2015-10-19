@@ -2,42 +2,24 @@ use memory::{Addressable, AccessWidth};
 
 /// Sound Processing Unit
 pub struct Spu {
-    control: u16,
-    main_volume_left: Volume,
-    main_volume_right: Volume,
-    reverb_volume_left: i16,
-    reverb_volume_right: i16,
-    cd_volume_left: i16,
-    cd_volume_right: i16,
-    ext_volume_left: i16,
-    ext_volume_right: i16,
-    /// Last value written to "voice on" register
-    voice_on: (u16, u16),
+    /// Most of the SPU registers are not updated by the hardware,
+    /// their value is just moved to the internal registers when
+    /// needed. Therefore we can emulate those registers like a RAM of
+    /// sorts.
+    shadow_registers: [u16; 0x100],
 
     /// SPU RAM: 256k 16bit samples
     ram: [u16; 256 * 1024],
     /// Write pointer in the SPU RAM
     ram_index: u32,
-
-    voices: [Voice; 24],
 }
 
 impl Spu {
     pub fn new() -> Spu {
         Spu {
-            control: 0,
-            main_volume_left: Volume::new(),
-            main_volume_right: Volume::new(),
-            reverb_volume_left: 0,
-            reverb_volume_right: 0,
-            cd_volume_left: 0,
-            cd_volume_right: 0,
-            ext_volume_left: 0,
-            ext_volume_right: 0,
-
+            shadow_registers: [0; 0x100],
             ram: [0xbad; 256 * 1024],
             ram_index: 0,
-            voices: [Voice::new(); 24],
         }
     }
 
@@ -49,42 +31,93 @@ impl Spu {
         let val = val.as_u16();
 
         if offset < 0x180 {
-            let voice = &mut self.voices[(offset >> 4) as usize];
-
             match offset & 0xf {
-                0x0 => voice.volume_left = Volume::from_reg(val),
-                0x2 => voice.volume_right = Volume::from_reg(val),
-                0x4 => voice.sample_rate = val,
-                0x6 => voice.start_address = val,
-                0x8 => voice.set_adsr_low(val),
-                0xa => voice.set_adsr_high(val),
+                //voice.volume_left
+                0x0 => (),
+                //voice.volume_right
+                0x2 => (),
+                //voice.sample_rate
+                0x4 => (),
+                //voice.start_address
+                0x6 => (),
+                //voice.set_adsr_low
+                0x8 => (),
+                //voice.set_adsr_high
+                0xa => (),
                 _ => panic!("Unhandled SPU Voice store {:x} {:04x}",
                             offset, val),
             }
         } else {
-            match offset {
-                0x180 => self.main_volume_left = Volume::from_reg(val),
-                0x182 => self.main_volume_right = Volume::from_reg(val),
-                0x184 => self.reverb_volume_left = val as i16,
-                0x186 => self.reverb_volume_right = val as i16,
-                0x18c => self.set_voice_off(val as u32),
-                0x18e => self.set_voice_off((val as u32) << 16),
-                0x190 => self.enable_pitch_modulation(val as u32),
-                0x192 => self.enable_pitch_modulation((val as u32) << 16),
-                0x194 => self.enable_noise_mode(val as u32),
-                0x196 => self.enable_noise_mode((val as u32) << 16),
-                0x198 => self.enable_reverb(val as u32),
-                0x19a => self.enable_reverb((val as u32) << 16),
-                0x1a6 => self.ram_index = (val as u32) << 2,
-                0x1a8 => self.fifo_write(val),
-                0x1aa => self.set_control(val),
-                0x1ac => self.set_ram_control(val),
-                0x1b0 => self.cd_volume_left = val as i16,
-                0x1b2 => self.cd_volume_right = val as i16,
-                0x1b4 => self.ext_volume_left = val as i16,
-                0x1b6 => self.ext_volume_right = val as i16,
+            match (offset >> 1) as usize {
+                regmap::MAIN_VOLUME_LEFT => (),
+                regmap::MAIN_VOLUME_RIGHT => (),
+                regmap::REVERB_VOLUME_LEFT => (),
+                regmap::REVERB_VOLUME_RIGHT => (),
+                regmap::VOICE_ON_LOW =>
+                    self.shadow_registers[regmap::VOICE_STATUS_LOW] |= val,
+                regmap::VOICE_ON_HIGH =>
+                    self.shadow_registers[regmap::VOICE_STATUS_HIGH] |= val,
+                regmap::VOICE_OFF_LOW =>
+                    self.shadow_registers[regmap::VOICE_STATUS_LOW] &= !val,
+                regmap::VOICE_OFF_HIGH =>
+                    self.shadow_registers[regmap::VOICE_STATUS_HIGH] &= !val,
+                regmap::VOICE_PITCH_MOD_EN_LOW => (),
+                regmap::VOICE_PITCH_MOD_EN_HIGH => (),
+                regmap::VOICE_NOISE_EN_LOW => (),
+                regmap::VOICE_NOISE_EN_HIGH => (),
+                regmap::VOICE_REVERB_EN_LOW => (),
+                regmap::VOICE_REVERB_EN_HIGH => (),
+                regmap::REVERB_BASE => (),
+                regmap::TRANSFER_START_INDEX =>
+                    self.ram_index = (val as u32) << 2,
+                regmap::TRANSFER_FIFO =>
+                    self.fifo_write(val),
+                regmap::CONTROL =>
+                    self.set_control(val),
+                regmap::TRANSFER_CONTROL =>
+                    self.set_transfer_control(val),
+                regmap::CD_VOLUME_LEFT => (),
+                regmap::CD_VOLUME_RIGHT => (),
+                regmap::EXT_VOLUME_LEFT => (),
+                regmap::EXT_VOLUME_RIGHT => (),
+                regmap::REVERB_APF_OFFSET1 => (),
+                regmap::REVERB_APF_OFFSET2 => (),
+                regmap::REVERB_REFLECT_VOLUME1 => (),
+                regmap::REVERB_COMB_VOLUME1 => (),
+                regmap::REVERB_COMB_VOLUME2 => (),
+                regmap::REVERB_COMB_VOLUME3 => (),
+                regmap::REVERB_COMB_VOLUME4 => (),
+                regmap::REVERB_REFLECT_VOLUME2 => (),
+                regmap::REVERB_APF_VOLUME1 => (),
+                regmap::REVERB_APF_VOLUME2 => (),
+                regmap::REVERB_REFLECT_SAME_LEFT1 => (),
+                regmap::REVERB_REFLECT_SAME_RIGHT1 => (),
+                regmap::REVERB_COMB_LEFT1 => (),
+                regmap::REVERB_COMB_RIGHT1 => (),
+                regmap::REVERB_COMB_LEFT2 => (),
+                regmap::REVERB_COMB_RIGHT2 => (),
+                regmap::REVERB_REFLECT_SAME_LEFT2 => (),
+                regmap::REVERB_REFLECT_SAME_RIGHT2 => (),
+                regmap::REVERB_REFLECT_DIFF_LEFT1 => (),
+                regmap::REVERB_REFLECT_DIFF_RIGHT1 => (),
+                regmap::REVERB_COMB_LEFT3 => (),
+                regmap::REVERB_COMB_RIGHT3 => (),
+                regmap::REVERB_COMB_LEFT4 => (),
+                regmap::REVERB_COMB_RIGHT4 => (),
+                regmap::REVERB_REFLECT_DIFF_LEFT2 => (),
+                regmap::REVERB_REFLECT_DIFF_RIGHT2 => (),
+                regmap::REVERB_APF_LEFT1 => (),
+                regmap::REVERB_APF_RIGHT1 => (),
+                regmap::REVERB_APF_LEFT2 => (),
+                regmap::REVERB_APF_RIGHT2 => (),
+                regmap::REVERB_INPUT_VOLUME_LEFT => (),
+                regmap::REVERB_INPUT_VOLUME_RIGHT => (),
                 _ => panic!("Unhandled SPU store {:x} {:04x}", offset, val),
             }
+        }
+
+        if offset < 0x200 {
+            self.shadow_registers[(offset >> 1) as usize] = val;
         }
     }
 
@@ -93,32 +126,42 @@ impl Spu {
             panic!("Unhandled {:?} SPU load", T::width());
         }
 
+        let shadow = self.shadow_registers[(offset >> 1) as usize];
+
+        // XXX This is a bit ugly but I use the match to "whitelist"
+        // shadow registers as I encounter them. Once all registers
+        // are correctly implemented we can default to the shadow.
         let r =
-            match offset {
-                // XXX return previous "voice on" value
-                0x188 => 0,
-                0x1aa => self.control,
-                0x1ae => self.status(),
+            match (offset >> 1) as usize {
+                regmap::VOICE_ON_LOW => shadow,
+                regmap::VOICE_ON_HIGH => shadow,
+                regmap::VOICE_OFF_LOW => shadow,
+                regmap::VOICE_OFF_HIGH => shadow,
+                regmap::CONTROL => shadow,
+                regmap::TRANSFER_CONTROL => shadow,
+                regmap::STATUS => self.status(),
                 _ => panic!("Unhandled SPU load {:x}", offset),
             };
 
         Addressable::from_u32(r as u32)
     }
 
-    fn set_control(&mut self, ctrl: u16) {
-        self.control = ctrl;
+    fn control(&self) -> u16 {
+        self.shadow_registers[regmap::CONTROL]
+    }
 
-        if ctrl & 0x7fef != 0 {
+    fn set_control(&mut self, ctrl: u16) {
+        if ctrl & 0x3f6a != 0 {
             panic!("Unhandled SPU control {:04x}", ctrl);
         }
     }
 
     fn status(&self) -> u16 {
-        self.control & 0x3f
+        self.control() & 0x3f
     }
 
     /// Set the SPU RAM access pattern
-    fn set_ram_control(&self, val: u16) {
+    fn set_transfer_control(&self, val: u16) {
         // For now only support "normal" (i.e. sequential) access
         if val != 0x4 {
             panic!("Unhandled SPU RAM access pattern {:x}", val);
@@ -133,22 +176,6 @@ impl Spu {
 
         self.ram[index as usize] = val;
         self.ram_index = (index + 1) & 0x3ffff;
-    }
-
-    fn set_voice_off(&mut self, val: u32) {
-        println!("SPU set voice off {:x}", val);
-    }
-
-    fn enable_pitch_modulation(&mut self, val: u32) {
-        println!("SPU enable pitch modulation {:x}", val);
-    }
-
-    fn enable_noise_mode(&mut self, val: u32) {
-        println!("SPU enable noise {:x}", val);
-    }
-
-    fn enable_reverb(&mut self, val: u32) {
-        println!("SPU enable reverb {:x}", val);
     }
 }
 
@@ -232,4 +259,70 @@ impl Voice {
         self.adsr &= 0xffff;
         self.adsr |= (val as u32) << 16;
     }
+}
+
+mod regmap {
+    //! SPU register map: offset from the base in number of
+    //! *halfwords*
+
+    pub const MAIN_VOLUME_LEFT:           usize = 0xc0;
+    pub const MAIN_VOLUME_RIGHT:          usize = 0xc1;
+    pub const REVERB_VOLUME_LEFT:         usize = 0xc2;
+    pub const REVERB_VOLUME_RIGHT:        usize = 0xc3;
+    pub const VOICE_ON_LOW:               usize = 0xc4;
+    pub const VOICE_ON_HIGH:              usize = 0xc5;
+    pub const VOICE_OFF_LOW:              usize = 0xc6;
+    pub const VOICE_OFF_HIGH:             usize = 0xc7;
+    pub const VOICE_PITCH_MOD_EN_LOW:     usize = 0xc8;
+    pub const VOICE_PITCH_MOD_EN_HIGH:    usize = 0xc9;
+    pub const VOICE_NOISE_EN_LOW:         usize = 0xca;
+    pub const VOICE_NOISE_EN_HIGH:        usize = 0xcb;
+    pub const VOICE_REVERB_EN_LOW:        usize = 0xcc;
+    pub const VOICE_REVERB_EN_HIGH:       usize = 0xcd;
+    pub const VOICE_STATUS_LOW:           usize = 0xce;
+    pub const VOICE_STATUS_HIGH:          usize = 0xcf;
+
+    pub const REVERB_BASE:                usize = 0xd1;
+    pub const TRANSFER_START_INDEX:       usize = 0xd3;
+    pub const TRANSFER_FIFO:              usize = 0xd4;
+    pub const CONTROL:                    usize = 0xd5;
+    pub const TRANSFER_CONTROL:           usize = 0xd6;
+    pub const STATUS:                     usize = 0xd7;
+    pub const CD_VOLUME_LEFT:             usize = 0xd8;
+    pub const CD_VOLUME_RIGHT:            usize = 0xd9;
+    pub const EXT_VOLUME_LEFT:            usize = 0xda;
+    pub const EXT_VOLUME_RIGHT:           usize = 0xdb;
+
+    pub const REVERB_APF_OFFSET1:         usize = 0xe0;
+    pub const REVERB_APF_OFFSET2:         usize = 0xe1;
+    pub const REVERB_REFLECT_VOLUME1:     usize = 0xe2;
+    pub const REVERB_COMB_VOLUME1:        usize = 0xe3;
+    pub const REVERB_COMB_VOLUME2:        usize = 0xe4;
+    pub const REVERB_COMB_VOLUME3:        usize = 0xe5;
+    pub const REVERB_COMB_VOLUME4:        usize = 0xe6;
+    pub const REVERB_REFLECT_VOLUME2:     usize = 0xe7;
+    pub const REVERB_APF_VOLUME1:         usize = 0xe8;
+    pub const REVERB_APF_VOLUME2:         usize = 0xe9;
+    pub const REVERB_REFLECT_SAME_LEFT1:  usize = 0xea;
+    pub const REVERB_REFLECT_SAME_RIGHT1: usize = 0xeb;
+    pub const REVERB_COMB_LEFT1:          usize = 0xec;
+    pub const REVERB_COMB_RIGHT1:         usize = 0xed;
+    pub const REVERB_COMB_LEFT2:          usize = 0xee;
+    pub const REVERB_COMB_RIGHT2:         usize = 0xef;
+    pub const REVERB_REFLECT_SAME_LEFT2:  usize = 0xf0;
+    pub const REVERB_REFLECT_SAME_RIGHT2: usize = 0xf1;
+    pub const REVERB_REFLECT_DIFF_LEFT1:  usize = 0xf2;
+    pub const REVERB_REFLECT_DIFF_RIGHT1: usize = 0xf3;
+    pub const REVERB_COMB_LEFT3:          usize = 0xf4;
+    pub const REVERB_COMB_RIGHT3:         usize = 0xf5;
+    pub const REVERB_COMB_LEFT4:          usize = 0xf6;
+    pub const REVERB_COMB_RIGHT4:         usize = 0xf7;
+    pub const REVERB_REFLECT_DIFF_LEFT2:  usize = 0xf8;
+    pub const REVERB_REFLECT_DIFF_RIGHT2: usize = 0xf9;
+    pub const REVERB_APF_LEFT1:           usize = 0xfa;
+    pub const REVERB_APF_RIGHT1:          usize = 0xfb;
+    pub const REVERB_APF_LEFT2:           usize = 0xfc;
+    pub const REVERB_APF_RIGHT2:          usize = 0xfd;
+    pub const REVERB_INPUT_VOLUME_LEFT:   usize = 0xfe;
+    pub const REVERB_INPUT_VOLUME_RIGHT:  usize = 0xff;
 }
