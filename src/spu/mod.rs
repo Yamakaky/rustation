@@ -30,25 +30,24 @@ impl Spu {
 
         let val = val.as_u16();
 
-        if offset < 0x180 {
-            match offset & 0xf {
-                //voice.volume_left
-                0x0 => (),
-                //voice.volume_right
-                0x2 => (),
-                //voice.sample_rate
-                0x4 => (),
-                //voice.start_address
-                0x6 => (),
-                //voice.set_adsr_low
-                0x8 => (),
-                //voice.set_adsr_high
-                0xa => (),
-                _ => panic!("Unhandled SPU Voice store {:x} {:04x}",
-                            offset, val),
+        // Convert into a halfword index
+        let index = (offset >> 1) as usize;
+
+        if index < 0xc0 {
+            match index & 7 {
+                regmap::voice::VOLUME_LEFT => (),
+                regmap::voice::VOLUME_RIGHT => (),
+                regmap::voice::ADPCM_SAMPLE_RATE => (),
+                regmap::voice::ADPCM_START_INDEX => (),
+                regmap::voice::ADPCM_ADSR_LOW => (),
+                regmap::voice::ADPCM_ADSR_HIGH => (),
+                // XXX change current volume?
+                regmap::voice::CURRENT_ADSR_VOLUME => (),
+                regmap::voice::ADPCM_REPEAT_INDEX => (),
+                _ => unreachable!(),
             }
         } else {
-            match (offset >> 1) as usize {
+            match index {
                 regmap::MAIN_VOLUME_LEFT => (),
                 regmap::MAIN_VOLUME_RIGHT => (),
                 regmap::REVERB_VOLUME_LEFT => (),
@@ -67,6 +66,8 @@ impl Spu {
                 regmap::VOICE_NOISE_EN_HIGH => (),
                 regmap::VOICE_REVERB_EN_LOW => (),
                 regmap::VOICE_REVERB_EN_HIGH => (),
+                regmap::VOICE_STATUS_LOW => (),
+                regmap::VOICE_STATUS_HIGH => (),
                 regmap::REVERB_BASE => (),
                 regmap::TRANSFER_START_INDEX =>
                     self.ram_index = (val as u32) << 2,
@@ -116,8 +117,8 @@ impl Spu {
             }
         }
 
-        if offset < 0x200 {
-            self.shadow_registers[(offset >> 1) as usize] = val;
+        if index < 0x100 {
+            self.shadow_registers[index] = val;
         }
     }
 
@@ -126,21 +127,46 @@ impl Spu {
             panic!("Unhandled {:?} SPU load", T::width());
         }
 
-        let shadow = self.shadow_registers[(offset >> 1) as usize];
+        let index = (offset >> 1) as usize;
+
+        let shadow = self.shadow_registers[index];
 
         // XXX This is a bit ugly but I use the match to "whitelist"
         // shadow registers as I encounter them. Once all registers
         // are correctly implemented we can default to the shadow.
         let r =
-            match (offset >> 1) as usize {
-                regmap::VOICE_ON_LOW => shadow,
-                regmap::VOICE_ON_HIGH => shadow,
-                regmap::VOICE_OFF_LOW => shadow,
-                regmap::VOICE_OFF_HIGH => shadow,
-                regmap::CONTROL => shadow,
-                regmap::TRANSFER_CONTROL => shadow,
-                regmap::STATUS => self.status(),
-                _ => panic!("Unhandled SPU load {:x}", offset),
+            if index < 0xc0 {
+                match index & 7 {
+                    regmap::voice::CURRENT_ADSR_VOLUME =>
+                        // XXX return current volume
+                        shadow,
+                    regmap::voice::ADPCM_REPEAT_INDEX =>
+                        // XXX return current repeat index
+                        shadow,
+                    _ => shadow,
+                }
+            } else {
+                match (offset >> 1) as usize {
+                    regmap::VOICE_ON_LOW => shadow,
+                    regmap::VOICE_ON_HIGH => shadow,
+                    regmap::VOICE_OFF_LOW => shadow,
+                    regmap::VOICE_OFF_HIGH => shadow,
+                    regmap::VOICE_REVERB_EN_LOW => shadow,
+                    regmap::VOICE_REVERB_EN_HIGH => shadow,
+                    regmap::VOICE_STATUS_LOW => shadow,
+                    regmap::VOICE_STATUS_HIGH => shadow,
+                    regmap::TRANSFER_START_INDEX => shadow,
+                    regmap::CONTROL => shadow,
+                    regmap::TRANSFER_CONTROL => shadow,
+                    regmap::STATUS => self.status(),
+                    regmap::CURRENT_VOLUME_LEFT =>
+                        // XXX return current value
+                        shadow,
+                    regmap::CURRENT_VOLUME_RIGHT =>
+                        // XXX return current value
+                        shadow,
+                    _ => panic!("Unhandled SPU load {:x}", offset),
+                }
             };
 
         Addressable::from_u32(r as u32)
@@ -151,7 +177,7 @@ impl Spu {
     }
 
     fn set_control(&mut self, ctrl: u16) {
-        if ctrl & 0x3f6a != 0 {
+        if ctrl & 0x3f4a != 0 {
             panic!("Unhandled SPU control {:04x}", ctrl);
         }
     }
@@ -179,91 +205,21 @@ impl Spu {
     }
 }
 
-#[derive(Clone, Copy)]
-enum Volume {
-    Constant(i16),
-    Sweep(SweepConfig),
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Copy)]
-struct SweepConfig {
-    /// True if sweep is exponential, otherwise linear
-    exponential: bool,
-    /// True if sweep is decreasing, otherwise increasing
-    decreasing: bool,
-    /// True if sweep phase is negative, otherwise positive
-    negative_phase: bool,
-    /// XXX Sweep shift and step values, not sure how to represent
-    /// those for the moment.
-    shift_step: u8,
-}
-
-impl Volume {
-    fn new() -> Volume {
-        Volume::Constant(0)
-    }
-
-    fn from_reg(val: u16) -> Volume {
-        let sweep = (val >> 15) != 0;
-
-        if sweep {
-            if val & 0xf80 != 0{
-                panic!("Unexpected sweep config {:x}", val);
-            }
-
-            let config =
-                SweepConfig {
-                    exponential: val & (1 << 14) != 0,
-                    decreasing: val & (1 << 13) != 0,
-                    negative_phase: val & (1 << 12) != 0,
-                    shift_step: (val & 0x7f) as u8,
-                };
-
-            Volume::Sweep(config)
-        } else {
-            let volume = (val << 1) as i16;
-
-            Volume::Constant(volume)
-        }
-    }
-}
-
-/// State for one of the 24 SPU voices
-#[derive(Clone,Copy)]
-struct Voice {
-    volume_left: Volume,
-    volume_right: Volume,
-    sample_rate: u16,
-    adsr: u32,
-    start_address: u16,
-}
-
-impl Voice {
-    fn new() -> Voice {
-        Voice {
-            volume_left: Volume::new(),
-            volume_right: Volume::new(),
-            sample_rate: 0,
-            adsr: 0,
-            start_address: 0,
-        }
-    }
-
-    fn set_adsr_low(&mut self, val: u16) {
-        self.adsr &= 0xffff0000;
-        self.adsr |= val as u32;
-    }
-
-    fn set_adsr_high(&mut self, val: u16) {
-        self.adsr &= 0xffff;
-        self.adsr |= (val as u32) << 16;
-    }
-}
-
 mod regmap {
     //! SPU register map: offset from the base in number of
     //! *halfwords*
+
+    pub mod voice {
+        //! Per-voice regmap, repeated 24 times
+        pub const VOLUME_LEFT:            usize = 0x0;
+        pub const VOLUME_RIGHT:           usize = 0x1;
+        pub const ADPCM_SAMPLE_RATE:      usize = 0x2;
+        pub const ADPCM_START_INDEX:      usize = 0x3;
+        pub const ADPCM_ADSR_LOW:         usize = 0x4;
+        pub const ADPCM_ADSR_HIGH:        usize = 0x5;
+        pub const CURRENT_ADSR_VOLUME:    usize = 0x6;
+        pub const ADPCM_REPEAT_INDEX:     usize = 0x7;
+    }
 
     pub const MAIN_VOLUME_LEFT:           usize = 0xc0;
     pub const MAIN_VOLUME_RIGHT:          usize = 0xc1;
@@ -292,6 +248,8 @@ mod regmap {
     pub const CD_VOLUME_RIGHT:            usize = 0xd9;
     pub const EXT_VOLUME_LEFT:            usize = 0xda;
     pub const EXT_VOLUME_RIGHT:           usize = 0xdb;
+    pub const CURRENT_VOLUME_LEFT:        usize = 0xdc;
+    pub const CURRENT_VOLUME_RIGHT:       usize = 0xdd;
 
     pub const REVERB_APF_OFFSET1:         usize = 0xe0;
     pub const REVERB_APF_OFFSET2:         usize = 0xe1;
